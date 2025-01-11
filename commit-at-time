@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+
+function increment() {
+	local file=${1:-.counter}
+	echo "$RANDOM" > "$file"
+}
+
+function commit() {
+	local timestamp=$(date -d "${1:-now}" +"%s")
+	local number=${2:-1}
+	local file=${3:-.counter}
+
+	for i in $(seq $number)
+	do
+		date=$(date -d "@$(($timestamp + $i*60*3))" +"%Y-%m-%d %T")
+		increment "$file"
+		git add "$file" >/dev/null
+		GIT_AUTHOR_DATE="$date" GIT_COMMITTER_DATE="$date" git commit -m "commit $date" "$file" >/dev/null
+	done
+}
+
+function get_icon_commits() {
+	local value=${1:-0}
+	[ $value -le 0 ]  && echo "|" && return
+	[ $value -le 2 ]  && echo "." && return
+	[ $value -le 4 ]  && echo "-" && return
+	[ $value -le 6 ]  && echo "=" && return
+	[ $value -le 8 ]  && echo "o" && return
+	[ $value -le 10 ] && echo "#" && return
+	                     echo "@"
+}
+
+function generate_work() {
+	max_commit_per_day=${1:-7}
+	min_commit_per_day=${2:-1}
+	work_days=${3:-1,2,3,4,5}
+
+	start_date=$(date -d "00:00 a year ago - $(($(date -d "00:00 a year ago" +"%u"))) days" +"%s")
+	end_date=$(date -d "next sunday" +"%s")
+	a_day_ms=$(date -d "1970/01/02 01:00:00" +"%s")
+
+ 	drawing_date="$start_date"
+ 	while [ $drawing_date -lt $end_date ]
+ 	do
+		day=$(date -d "@$drawing_date" +"%Y-%m-%dT00:00:00")
+		number_commit=$(( $RANDOM % ($max_commit_per_day - $min_commit_per_day) + $min_commit_per_day ))
+		commit "$day" $number_commit
+
+ 		((drawing_date+=$a_day_ms))
+ 	done
+	draw_calendar
+}
+
+function draw_calendar() {
+	# 54 weeks (col)
+	# 7  days  (row)
+	local mondays tuesdays wednesdays thursday fridays saturdays sundays
+	mondays="mon: "; tuesdays="tue: "; wednesdays="wed: "; thursday="thu: "; fridays="fri: "; saturdays="sat: "; sundays="sun: "
+
+	# start 1 year ago on monday
+	start_date=$(date -d "00:00 a year ago - $(($(date -d "00:00 a year ago" +"%u"))) days" +"%s")
+	end_date=$(date -d "next sunday" +"%s")
+	a_day_ms=$(date -d "1970/01/02 01:00:00" +"%s")
+
+ 	drawing_date="$start_date"
+ 	while [ $drawing_date -lt $end_date ]
+ 	do
+		day_start=$(date -d "@$drawing_date" +"%Y-%m-%dT00:00:00")
+		day_end=$(date -d "@$drawing_date" +"%Y-%m-%dT23:59:59")
+
+		number_commits=$(git log --since="$day_start" --until="$day_end" --oneline --all --topo-order | wc -l)
+		icon_commits="$(get_icon_commits $number_commits)"
+		day_of_week=$(date -d "@$drawing_date" +"%u")
+
+		[ $day_of_week -eq 1 ] && mondays="$mondays $icon_commits"
+		[ $day_of_week -eq 2 ] && tuesdays="$tuesdays $icon_commits"
+		[ $day_of_week -eq 3 ] && wednesdays="$wednesdays $icon_commits"
+		[ $day_of_week -eq 4 ] && thursday="$thursday $icon_commits"
+		[ $day_of_week -eq 5 ] && fridays="$fridays $icon_commits"
+		[ $day_of_week -eq 6 ] && saturdays="$saturdays $icon_commits"
+		[ $day_of_week -eq 7 ] && sundays="$sundays $icon_commits"
+
+		# [ $number_commits -gt 0 ] && echo "$day_start $number_commits"
+
+ 		((drawing_date+=$a_day_ms))
+ 	done
+
+	(echo $sundays; echo $mondays; echo $tuesdays; echo $wednesdays; echo $thursday; echo $fridays; echo $saturdays) | sed "s/|/ /g"
+}
+
+_get_char_at_position() {
+	local file="$1"
+	local x="$2"
+	local y="$3"
+
+	local line="$(sed -n "${y}p" "$file")"
+
+	if [ -z "$line" ]; then
+		echo "La ligne $y n'existe pas." >&2
+		return 1
+	fi
+
+	if [ ${#line} -lt "$x" ]; then
+		echo "La position $x est hors limites dans la ligne $y. (size ${#line})" >&2
+		return 1
+	fi
+
+	echo "${line:$x:1}"
+}
+
+function generate_work_from_file() {
+	local file=${1:-text}
+
+	start_date=$(date -d "00:00 a year ago - $(($(date -d "00:00 a year ago" +"%u"))) days" +"%s")
+	end_date=$(date -d "next sunday" +"%s")
+	a_day_ms=$(date -d "1970/01/02 01:00:00" +"%s")
+	x=0
+
+ 	drawing_date="$start_date"
+ 	while [ $drawing_date -lt $end_date ]
+ 	do
+		y=$(( $(date -d "@$drawing_date" +"%u")%7 +1))
+
+		c=$(_get_char_at_position "$file" "$x" "$y")
+
+		[ "$c" == "." ] && commit "@$drawing_date" 1
+		[ "$c" == "-" ] && commit "@$drawing_date" 3
+		[ "$c" == "=" ] && commit "@$drawing_date" 5
+		[ "$c" == "o" ] && commit "@$drawing_date" 7
+		[ "$c" == "#" ] && commit "@$drawing_date" 9
+		[ "$c" == "@" ] && commit "@$drawing_date" 15
+
+		[ "$y" -eq 7 ] && x=$(($x+1))
+ 		((drawing_date+=$a_day_ms))
+ 	done
+	draw_calendar
+}
+
+function reset_git() {
+	pwd
+	[ -d .git.bak ] && rm -rf .git.bak
+	mv .git/ .git.bak
+	git init > /dev/null 2>&1
+}
